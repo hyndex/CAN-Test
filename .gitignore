@@ -1,0 +1,11 @@
+.pio
+.vscode
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.swo
+*.log
+env/
+venv/
