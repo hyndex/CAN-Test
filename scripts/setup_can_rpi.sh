@@ -71,6 +71,17 @@ backup_path="${CONFIG_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
 cp "$CONFIG_PATH" "$backup_path"
 echo "Backed up $CONFIG_PATH to $backup_path"
 
+# Remove any existing MCP2515 overlay lines to avoid conflicting configuration.
+tmp_cfg="$(mktemp)"
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if [[ "$line" =~ ^dtoverlay=mcp2515 ]]; then
+    echo "Removed existing overlay line: $line"
+    continue
+  fi
+  echo "$line" >> "$tmp_cfg"
+done < "$CONFIG_PATH"
+mv "$tmp_cfg" "$CONFIG_PATH"
+
 ensure_line() {
   local line="$1"
   if ! grep -Fxq "$line" "$CONFIG_PATH"; then

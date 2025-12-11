@@ -8,7 +8,7 @@ Robu MCP2515 boards power both MCP2515 and TJA1050 from 5 V and **do not level
 
 - Modifying the board so MCP2515 runs at 3.3 V and TJA1050 at 5 V, or
 - Using a 3.3 V CAN transceiver board / HAT, or
-- Adding proper bidirectional level shifters on all SPI lines.
+- Adding proper bidirectional level shifters on all SPI/INT lines.
 
 Do not skip this in hardware.
 
@@ -53,7 +53,8 @@ Do not skip this in hardware.
   - ESP initiates PING (ID `0x123`) every second; expects PONG (ID `0x124`) with identical payload.
   - Responds to Pi-initiated PING (ID `0x223`) with PONG (ID `0x224`).
   - Prints `MATCHED` only when payload bytes match exactly.
-  - Tracks send errors; auto-reinitializes MCP2515 after repeated failures.
+  - Uses INT line on GPIO40 for prompt RX handling (falls back to polling).
+  - Tracks errors, overflows, and bus-off; auto-reinitializes MCP2515 after repeated failures.
 
 ### Build & flash
 
@@ -78,7 +79,10 @@ pio device monitor -e esp32-s3-devkitc-1
    ```
 4. Bring up CAN:
    ```bash
-   sudo ip link set can0 up type can bitrate 125000
+   sudo ip link set can0 down || true
+   sudo ip link set can0 type can bitrate 125000 restart-ms 100 triple-sampling on
+   sudo ip link set can0 txqueuelen 1024
+   sudo ip link set can0 up
    ip -details -statistics link show can0
    ```
 5. Run the bidirectional responder/initiator:
@@ -95,6 +99,7 @@ sudo ./scripts/setup_can_rpi.sh
 ```
 
 Defaults: `can0`, 125000 bit/s, oscillator 8000000, interrupt GPIO25. It backs up `/boot/config.txt` (or `/boot/firmware/config.txt`), ensures the overlays are present, and if `can0` already exists it configures and brings it up immediately. Reboot after first run to load overlays.
+The script also removes any existing MCP2515 overlay lines to avoid conflicting settings.
 
 ## Expected runtime output
 

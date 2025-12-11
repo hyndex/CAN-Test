@@ -60,29 +60,53 @@ def pattern_matches(data: bytes) -> bool:
 class PingPongRunner:
     def __init__(self, channel: str = "can0"):
         self.channel = channel
-        try:
-            self.bus = can.Bus(interface="socketcan", channel=channel)
-        except Exception as exc:  # noqa: BLE001 - we want to show any init failure
-            print(f"Failed to open CAN interface {channel}: {exc}")
-            sys.exit(1)
-
+        self.bus: Optional[can.Bus] = None
         self.last_pi_ping_data: Optional[bytes] = None
         self.pi_counter: int = 0
         self.next_pi_ping_at: float = time.monotonic()
         self.running = True
+        self.error_streak: int = 0
+        self.max_error_streak: int = 5
+
+        self._open_bus(initial=True)
+
+    def _open_bus(self, initial: bool = False) -> None:
+        if self.bus is not None:
+            try:
+                self.bus.shutdown()
+            except Exception:
+                pass
+            self.bus = None
+
+        try:
+            self.bus = can.Bus(interface="socketcan", channel=self.channel)
+            self.error_streak = 0
+            print(f"{'Opened' if initial else 'Reopened'} CAN bus on {self.channel}")
+        except Exception as exc:  # noqa: BLE001 - show any init failure
+            print(f"Failed to open CAN interface {self.channel}: {exc}")
+            if initial:
+                sys.exit(1)
+            time.sleep(1)
 
     def _send(self, msg: can.Message, label: str) -> None:
+        if self.bus is None:
+            print(f"Cannot send ({label}): bus not available")
+            self._note_error()
+            return
         try:
             self.bus.send(msg)
             print(label)
+            self.error_streak = 0
         except can.CanError as exc:
             print(f"ERROR sending {label}: {exc}")
+            self._note_error()
 
     def _handle_rx(self, msg: can.Message) -> None:
         print(
             f"RX: ID=0x{msg.arbitration_id:X}, DLC={msg.dlc}, "
             f"DATA={bytes(msg.data).hex(' ')}"
         )
+        self.error_streak = 0
 
         if msg.is_extended_id or msg.dlc != 8:
             return  # ignore unsupported frames for this test
@@ -125,21 +149,36 @@ class PingPongRunner:
         self.pi_counter = (self.pi_counter + 1) & 0xFF
         self.next_pi_ping_at = now + PING_PERIOD_SEC
 
+    def _note_error(self) -> None:
+        self.error_streak += 1
+        if self.error_streak >= self.max_error_streak:
+            print("Error streak threshold reached; reopening CAN interface...")
+            self._open_bus()
+
     def run(self) -> None:
         print(f"Starting ping-pong on {self.channel} (125kbps expected)...")
 
         while self.running:
+            if self.bus is None:
+                self._open_bus()
+                time.sleep(0.1)
+                continue
+
             now = time.monotonic()
             self._send_pi_ping_if_due(now)
 
             try:
                 msg = self.bus.recv(timeout=0.1)
-            except can.CanError as exc:
+            except (can.CanError, OSError) as exc:
                 print(f"Receive error: {exc}")
+                self._note_error()
                 continue
 
             if msg is not None:
                 self._handle_rx(msg)
+            else:
+                # Timeout without data counts as healthy idle; do not increment errors.
+                pass
 
     def stop(self) -> None:
         self.running = False
